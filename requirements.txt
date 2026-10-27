@@ -16,6 +16,6 @@ quart_rate_limiter~=0.9.0
 quart_auth~=0.9.1
 quart-compress~=0.2.1
 dataclasses_json~=0.6.4
-PuLP~=2.8.0
+PuLP>=2.8.0,<=3.3.2,!=3.0.1
 openpyxl~=3.1.5
 networkx
