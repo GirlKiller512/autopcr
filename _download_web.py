@@ -100,5 +100,4 @@ async def main(zips):
 if __name__ == "__main__":
     import sys
     zips = sys.argv[1:]
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main(zips))
+    asyncio.run(main(zips))

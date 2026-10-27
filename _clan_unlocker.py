@@ -135,7 +135,8 @@ for acc in j['workers']:
 
 tasks = []
 
-loop = asyncio.get_event_loop()
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
 for acc in accounts:
     client = pcrclient(acc)
