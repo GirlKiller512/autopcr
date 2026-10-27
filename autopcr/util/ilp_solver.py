@@ -1,6 +1,21 @@
 from typing import Dict, List, Tuple
-from pulp import PULP_CBC_CMD, LpProblem, LpMinimize, LpStatus, LpVariable, lpSum, LpStatusOptimal, LpInteger
+import pulp
+from pulp import COIN_CMD, LpProblem, LpMinimize, LpVariable, lpSum, LpInteger
 import networkx as nx
+
+def _solve(prob: LpProblem, **kwargs) -> bool:
+    legacy_solver = getattr(pulp, "PULP_CBC_CMD", None)
+    if legacy_solver is not None:
+        kwargs["path"] = legacy_solver.pulp_cbc_path
+    result = prob.solve(COIN_CMD(msg=False, **kwargs))
+    if hasattr(result, "has_solution"):
+        # CBC 也会将间隙为零的最优解报告为 GapLimit。
+        return result.has_solution and (
+            result.status == pulp.LpSolveStatus.Optimal or
+            (result.status == pulp.LpSolveStatus.GapLimit and
+             (kwargs.get("gapAbs") is not None or result.gap_abs == 0))
+        )
+    return result == pulp.LpStatusOptimal
 
 def ilp_solver(ub: List[int], target: int, limit: int, effect: List[int]) -> Tuple[bool, List[int]]:
     '''
@@ -16,7 +31,8 @@ def ilp_solver(ub: List[int], target: int, limit: int, effect: List[int]) -> Tup
 
     n = len(ub)
 
-    x = [LpVariable(str(effect[i]), lowBound=0, upBound=ub[i], cat=LpInteger) for i in range(n)]
+    add_variable = getattr(prob, "add_variable", LpVariable)
+    x = [add_variable(f"x_{i}", lowBound=0, upBound=ub[i], cat=LpInteger) for i in range(n)]
 
     prob += lpSum([effect[i]*x[i] for i in range(n)]), "cost"
 
@@ -24,10 +40,11 @@ def ilp_solver(ub: List[int], target: int, limit: int, effect: List[int]) -> Tup
     if limit != -1:
         prob += lpSum([effect[i]*x[i] for i in range(n)]) <= limit - 1, "limit_value"
 
-    prob.solve(PULP_CBC_CMD(msg=False))
-    result = {v.name: int(v.varValue) for v in prob.variables()}
-    ret = [result[str(effect[i])] for i in range(n)]
-    return prob.status == LpStatusOptimal, ret
+    # CBC 2.10.3 的整数预处理可能在此模型返回非最优解。
+    if not _solve(prob, options=["preprocess off"]):
+        return False, []
+    ret = [round(v.varValue or 0) for v in x]
+    return True, ret
 
 def dispatch_solver(start: List[int], candidate: List[int], lb: List[int], choose: int) -> Tuple[bool, List[int]]:
     '''
@@ -46,9 +63,10 @@ def dispatch_solver(start: List[int], candidate: List[int], lb: List[int], choos
     assert len(start) == len(lb), "组数需等于组下界数"
     prob = LpProblem(name='dispatch', sense=LpMinimize)
 
-    x = [[LpVariable(vname(j, i), lowBound=0, upBound=1, cat=LpInteger) for i in range(n)] for j in range(m)]
-    min = LpVariable("min")
-    max = LpVariable("max")
+    add_variable = getattr(prob, "add_variable", LpVariable)
+    x = [[add_variable(vname(j, i), lowBound=0, upBound=1, cat=LpInteger) for i in range(n)] for j in range(m)]
+    min = add_variable("min")
+    max = add_variable("max")
 
     psum = [lpSum([x[i][j] * candidate[i] for i in range(m)]) + start[j] for j in range(n)]
     prob += (max - min), "dispatch_power"
@@ -62,10 +80,10 @@ def dispatch_solver(start: List[int], candidate: List[int], lb: List[int], choos
         prob += max >= psum[i], f"max_{i}"
         prob += min <= psum[i], f"min_{i}"
 
-    prob.solve(PULP_CBC_CMD(msg=False, gapAbs = 200))
-    result = {v.name: int(v.varValue) for v in prob.variables()}
-    ret = [next(i for i in range(n) if result[vname(j, i)] == 1) for j in range(m)]
-    return prob.status == LpStatusOptimal, ret
+    if not _solve(prob, gapAbs=200):
+        return False, []
+    ret = [next(i for i in range(n) if round(x[j][i].varValue) == 1) for j in range(m)]
+    return True, ret
 
 def memory_use_average(items: List[int], target_cnt: int) -> Tuple[bool, List[int]]:
     '''
@@ -74,11 +92,14 @@ def memory_use_average(items: List[int], target_cnt: int) -> Tuple[bool, List[in
     :param target_cnt: 目标数量
     :return: 是否有解，每种碎片使用数量
     '''
+    if not items:
+        return target_cnt == 0, []
     n = len(items)
     prob = LpProblem(name='memory_use', sense=LpMinimize)
 
-    x = [LpVariable(f"x_{i}", lowBound=0, upBound=items[i], cat=LpInteger) for i in range(n)]
-    max = LpVariable("max")
+    add_variable = getattr(prob, "add_variable", LpVariable)
+    x = [add_variable(f"x_{i}", lowBound=0, upBound=items[i], cat=LpInteger) for i in range(n)]
+    max = add_variable("max")
 
     prob += max, "object"
 
@@ -86,10 +107,10 @@ def memory_use_average(items: List[int], target_cnt: int) -> Tuple[bool, List[in
     for i in range(n):
         prob += max >= items[i] - x[i], f"max_{i}"
 
-    prob.solve(PULP_CBC_CMD(msg=False))
-    result = {v.name: int(v.varValue) for v in prob.variables()}
-    ret = [result[f"x_{i}"] for i in range(n)]
-    return prob.status == LpStatusOptimal, ret
+    if not _solve(prob):
+        return False, []
+    ret = [round(v.varValue) for v in x]
+    return True, ret
 
 def memory_use_average_binary_search(items: List[int], target_cnt: int) -> Tuple[bool, List[int]]:
     '''
@@ -141,6 +162,7 @@ if __name__ == '__main__':
     # dispatch_solver([0,0,0], candidate, [100000, 100000, 100000], 8)
     # memory_use_average([1, 1, 55, 46, 10, 90, 3, 124, 90, 4, 33, 31, 5, 51, 18, 114, 30, 9, 47, 22, 19, 53, 9, 9, 37, 22, 24, 32, 176, 32, 200, 234, 322, 103, 44, 21, 45, 69, 20, 58, 57, 147, 85, 27, 9, 89, 31, 46, 37, 22, 7, 9, 16, 46, 88, 38, 16, 33, 15], 3000)
     # memory_use_average_binary_search([1, 1, 55, 46, 10, 90, 3, 124, 90, 4, 33, 31, 5, 51, 18, 114, 30, 9, 47, 22, 19, 53, 9, 9, 37, 22, 24, 32, 176, 32, 200, 234, 322, 103, 44, 21, 45, 69, 20, 58, 57, 147, 85, 27, 9, 89, 31, 46, 37, 22, 7, 9, 16, 46, 88, 38, 16, 33, 15], 3000)
-    edges = eval(open("input.txt").read())
+    with open("input.txt") as input_file:
+        edges = eval(input_file.read())
     cost, s = ex_equip_power_max_cost_flow(edges, 'st', 'ed')
     print(cost)
