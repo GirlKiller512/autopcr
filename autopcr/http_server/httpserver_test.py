@@ -7,6 +7,7 @@ from ..module.crons import queue_crons
 
 server = HttpServer(host=SERVER_HOST, port=SERVER_PORT)
 
+asyncio.set_event_loop(asyncio.new_event_loop())
 queue_crons()
 
 asyncio.get_event_loop().create_task(db_start())
