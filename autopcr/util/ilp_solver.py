@@ -1,10 +1,21 @@
 from typing import Dict, List, Tuple
-from pulp import COIN_CMD, PULP_CBC_CMD, LpProblem, LpMinimize, LpVariable, lpSum, LpStatusOptimal, LpInteger
+import pulp
+from pulp import COIN_CMD, LpProblem, LpMinimize, LpVariable, lpSum, LpInteger
 import networkx as nx
 
 def _solve(prob: LpProblem, **kwargs) -> bool:
-    prob.solve(COIN_CMD(path=PULP_CBC_CMD.pulp_cbc_path, msg=False, **kwargs))
-    return prob.status == LpStatusOptimal
+    legacy_solver = getattr(pulp, "PULP_CBC_CMD", None)
+    if legacy_solver is not None:
+        kwargs["path"] = legacy_solver.pulp_cbc_path
+    result = prob.solve(COIN_CMD(msg=False, **kwargs))
+    if hasattr(result, "has_solution"):
+        # CBC 也会将间隙为零的最优解报告为 GapLimit。
+        return result.has_solution and (
+            result.status == pulp.LpSolveStatus.Optimal or
+            (result.status == pulp.LpSolveStatus.GapLimit and
+             (kwargs.get("gapAbs") is not None or result.gap_abs == 0))
+        )
+    return result == pulp.LpStatusOptimal
 
 def ilp_solver(ub: List[int], target: int, limit: int, effect: List[int]) -> Tuple[bool, List[int]]:
     '''

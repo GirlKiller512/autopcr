@@ -1,5 +1,5 @@
 # 阶段1：构建工具和依赖安装
-FROM python:3.10-slim AS tools
+FROM python:3.12-slim AS tools
 
 # 声明获取 Docker 自动注入的架构参数
 ARG TARGETARCH
@@ -35,7 +35,7 @@ COPY ./requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 # 阶段3：最终镜像
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 ENV PYTHONIOENCODING=utf-8
 
@@ -49,7 +49,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # 仅复制依赖
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 
 # 复制项目代码
 COPY . .
