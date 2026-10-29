@@ -39,7 +39,7 @@ class ResponseHeader(BaseModel):
     viewer_id: str = None
     servertime: int = 0
     result_code: int = -1
-    short_udid: str = None
+    short_udid: str | bool = None
 
 class Response(BaseModel, Generic[TResponse]):
     data_headers: ResponseHeader = None
