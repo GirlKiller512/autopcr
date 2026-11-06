@@ -1,12 +1,19 @@
 #type: ignore
 from inspect import get_annotations
 from typing import ClassVar, Generic, TypeVar, Optional
-from pydantic import BaseModel as PydanticBaseModel, ConfigDict
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
 
 class BaseModel(PydanticBaseModel):
     """Keep the generated models' implicit nullable defaults."""
     model_config = ConfigDict(coerce_numbers_to_str=True, validate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_empty_model(cls, value):
+        if isinstance(value, list) and not value:
+            return {}
+        return value
 
     def __init_subclass__(cls, **kwargs):
         # Normalize annotations before Pydantic builds nested model schemas.
