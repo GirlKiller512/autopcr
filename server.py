@@ -220,7 +220,11 @@ async def check_validate(botev: BotEvent, qq: str, cnt: int = 1):
             url = address + url.lstrip("/daily/")
             
             msg=f"pcr账号登录需要验证码，请点击以下链接在120秒内完成认证:\n{url}"
-            await botev.send(msg)
+            try:
+                await botev.send(msg)
+            except Exception:
+                logger.exception("发送 AutoPCR 验证码提示失败")
+                return
 
         else:
             await asyncio.sleep(1)
