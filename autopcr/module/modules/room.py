@@ -69,7 +69,7 @@ class room_like_back(Module):
                 continue
             try:
                 resp = await client.room_like(user.room_user_info.viewer_id)
-                result += resp.reward_list
+                result += resp.reward_list or []
                 like_user.append(user.room_user_info.name)
                 cnt += 1
             except Exception as e:
