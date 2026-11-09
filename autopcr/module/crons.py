@@ -44,22 +44,26 @@ async def _cron(task):
 async def real_run_cron(accountmgr: AccountManager, accounts_to_run, cur):
     async def run_one_account(account):
         nonlocal cur
-        async with accountmgr.load(account) as mgr:
-            try:
+        try:
+            async with accountmgr.load(account) as mgr:
                 await mgr.pre_cron_run(cur.hour, cur.minute)
                 await write_cron_log(eCronOperation.START, cur, accountmgr.qid, account, eResultStatus.SUCCESS)
                 res = await mgr.do_daily()
                 status = res.status
                 cur = datetime.datetime.now()
-                await write_cron_log(eCronOperation.FINISH, cur,  accountmgr.qid, account, status)
-            except Exception as e:
-                logger.exception(f"error in cron job {accountmgr.qid} {account}: {e}")
-                await write_cron_log(eCronOperation.START, cur,  accountmgr.qid, account, eResultStatus.ERROR, str(e))
+                await write_cron_log(eCronOperation.FINISH, cur, accountmgr.qid, account, status)
+        except Exception as e:
+            logger.exception(f"error in cron job {accountmgr.qid} {account}: {e}")
+            try:
+                await write_cron_log(eCronOperation.START, cur, accountmgr.qid, account, eResultStatus.ERROR, str(e))
+            except Exception:
+                logger.exception(f"error writing cron log for {accountmgr.qid} {account}")
 
-    await asyncio.gather(*[run_one_account(account) for account in accounts_to_run])
-    
-    await accountmgr.__aexit__(None, None, None)
-    
+    try:
+        await asyncio.gather(*(run_one_account(account) for account in accounts_to_run))
+    finally:
+        await accountmgr.__aexit__(None, None, None)
+
 
 MAX_CONCURRENT_QID_CHECKS = 5
 
@@ -72,9 +76,12 @@ async def _run_crons(cur: datetime.datetime):
         try:
             accounts_to_run = []
             for account in accountmgr.accounts():
-                async with accountmgr.load(account, readonly=True) as mgr:
-                    if await mgr.is_cron_run(cur.hour, cur.minute):
-                        accounts_to_run.append(account)
+                try:
+                    async with accountmgr.load(account, readonly=True) as mgr:
+                        if await mgr.is_cron_run(cur.hour, cur.minute):
+                            accounts_to_run.append(account)
+                except Exception:
+                    logger.exception(f"error checking cron job {qid} {account}")
             
             if accounts_to_run:
                 asyncio.get_event_loop().create_task(real_run_cron(accountmgr, accounts_to_run, cur))
@@ -88,6 +95,8 @@ async def _run_crons(cur: datetime.datetime):
     async def run_and_release(qid):
         try:
             await run_one_qid(qid)
+        except Exception:
+            logger.exception(f"error checking cron jobs for {qid}")
         finally:
             pending.discard(asyncio.current_task())
 
@@ -109,5 +118,8 @@ async def write_cron_log(operation: eCronOperation, cur: datetime.datetime, qid:
 
 def queue_crons():
     async def task(cur):
-        await _run_crons(cur)
+        try:
+            await _run_crons(cur)
+        except Exception:
+            logger.exception("error checking cron jobs")
     asyncio.get_event_loop().create_task(_cron(task))
