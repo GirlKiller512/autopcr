@@ -12,17 +12,17 @@ def run_task():
     import json
 
     try:
-        prev_dismissed = json.load(open('dismissed.json', 'r'))
-    except:
-        prev_dismissed = []
+        with open('dismissed.json', encoding='utf-8') as source:
+            prev_dismissed = set(json.load(source))
+    except (FileNotFoundError, json.JSONDecodeError):
+        prev_dismissed = set()
 
-    prev_dismissed = set(prev_dismissed)
+    max_dismissed = max(prev_dismissed, default=0)
+    last_not_dismissed = max(
+        (x for x in range(max_dismissed) if x not in prev_dismissed), default=0
+    )
 
-    max_dismissed = max(prev_dismissed)
-
-    last_not_dismissed = max(x for x in range(max_dismissed) if x not in prev_dismissed)
-
-    with open('farm_config.json', 'r') as fp:
+    with open('farm_config.json', encoding='utf-8') as fp:
         j = json.load(fp)
     for acc in j['workers']:
         acc['account'] = acc['username']
@@ -31,6 +31,9 @@ def run_task():
         acc['channel'] = 1
         accounts.append(acc)
 
+    if not accounts:
+        return
+
     SEARCH_START = 0
     SEARCH_END = 2000000
 
@@ -38,38 +41,15 @@ def run_task():
 
     id_lck = asyncio.Lock()
 
-    dismissed = list(prev_dismissed)
     dismissed_t = []
-
-    dismissed_lck = asyncio.Lock()
-
     current = 0
 
     import datetime
 
     date = datetime.datetime.now().strftime('%Y-%m-%d')
-    fout = open(f'dbs/clan_{date}.log', 'w')
-
+    log_path = f'dbs/clan_{date}.log'
     fout_lck = asyncio.Lock()
-
     last_ok = -1
-
-    run_once = False
-    run_once_lck = asyncio.Lock()
-
-    async def run_once_saveall():
-        nonlocal dismissed, dismissed_t, last_ok, run_once
-        async with run_once_lck:
-            if run_once:
-                return
-            run_once = True
-        async with dismissed_lck:
-            dismissed += [
-                x for x in dismissed_t if x < last_ok
-            ]
-            json.dump(dismissed, open('dismissed.json', 'w'))
-        
-        fout.close()
 
     async def worker(account):
         nonlocal current, last_ok
@@ -86,10 +66,11 @@ def run_task():
 
         while True:
             async with id_lck:
+                if current >= len(ids):
+                    break
                 id = ids[current]
                 current += 1
                 if id > last_ok + 10000: # 1w个都没成功，认为已经无法成功
-                    await run_once_saveall()
                     break
             while True:
                 req = OtherClanInfoRequest()
@@ -103,8 +84,7 @@ def run_task():
                     break
                 except ApiException as ex:
                     if '此行会已解散。' in ex.args[0]:
-                        async with dismissed_lck:
-                            dismissed_t.append(id)
+                        dismissed_t.append(id)
                         print(f'[{id}]{ex}')
                         break
 
@@ -115,20 +95,21 @@ def run_task():
                             comp._logged = False
                     await client.login()
 
-    import asyncio
+    async def run_workers():
+        await asyncio.gather(*(worker(account) for account in accounts))
 
-    loop = asyncio.new_event_loop()
+    os.makedirs('dbs', exist_ok=True)
+    with open(log_path, 'w', encoding='utf-8') as fout:
+        asyncio.run(run_workers())
 
-    waiter = asyncio.wait([worker(x) for x in accounts])
+    dismissed = prev_dismissed | {clan_id for clan_id in dismissed_t if clan_id < last_ok}
+    with open('dismissed.json', 'w', encoding='utf-8') as target:
+        json.dump(sorted(dismissed), target)
 
-    loop.run_until_complete(waiter)
+    os.system(f'ClanAnalyzer.exe {log_path}')
+    os.remove(log_path)
 
-    loop.close()
 
-    os.system(f'ClanAnalyzer.exe dbs/clan_{date}.log')
-
-    os.remove(f'dbs/clan_{date}.log')
-    
 import datetime
 import time
 
