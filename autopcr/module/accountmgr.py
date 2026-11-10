@@ -141,20 +141,26 @@ class Account(ModuleManager):
             return None
 
     async def get_daily_result_from_key(self, key: str) -> Union[None, TaskResult]:
-        try: # 为何不用dict？因为先前就用的list，不好更改，以及结果数不多，直接遍历也无所谓
-            result = next(filter(lambda x: x.key == key, self.data.daily_result))
-            return result.get_result()
+        try:
+            result = next((item for item in self.data.daily_result if item.key == key), None)
+            if result is not None:
+                return result.get_result()
+        except FileNotFoundError:
+            pass
         except Exception as e:
             logger.exception(e)
-            return None
+        return None
 
     async def get_single_result_from_key(self, module, key: str) -> Union[None, ModuleResult]:
         try:
-            result = next(filter(lambda x: x.key == key, self.data.single_result[module]))
-            return result.get_result()
+            result = next((item for item in self.get_single_result_list(module) if item.key == key), None)
+            if result is not None:
+                return result.get_result()
+        except FileNotFoundError:
+            pass
         except Exception as e:
             logger.exception(e)
-            return None
+        return None
 
     @property
     def id(self) -> str:
@@ -251,48 +257,63 @@ class AccountBatch(Account):
         }
 
     async def do_from_key(self, config: dict, key: str, isAdminCall: bool = False) -> List[ModuleResultInfo]:
-        async def do_from_key_pre(alias: str):
+        async def run_account(alias: str):
             async with self._parent.load(alias) as acc:
-                res = await acc.do_from_key(config, key, isAdminCall)
-                return res
+                info = await acc.do_from_key(config, key, isAdminCall)
+                return info, info.get_result()
 
-        loop = asyncio.get_event_loop()
-        alias = []
-        task = []
-        for acc in self.enable_account:
-            alias.append(acc)
-            task.append(loop.create_task(do_from_key_pre(acc)))
+        responses = await asyncio.gather(
+            *(run_account(alias) for alias in self.enable_account), return_exceptions=True
+        )
+        entries = []
+        for alias, response in zip(self.enable_account, responses):
+            if isinstance(response, Exception):
+                logger.error("批量执行账号 %s 失败", alias, exc_info=response)
+                info = None
+                result = ModuleResult(log="执行失败，详情请查看日志", status=eResultStatus.ERROR)
+            elif isinstance(response, BaseException):
+                raise response
+            else:
+                info, result = response
+            entries.append((alias, info, result))
 
-        resps = await asyncio.gather(*task, return_exceptions=True)
+        result_infos = [info for _, info, _ in entries if info is not None]
+        if entries:
+            first_result = next((result for _, info, result in entries if info is not None), None)
+            summary = copy(first_result) if first_result is not None else ModuleResult(name=key)
+            summary.table = copy(summary.table)
+            summary.log = '\n'.join(
+                f"==={alias}===\n{result.log}" for alias, _, result in entries if result.log
+            )
+            statuses = {result.status for _, _, result in entries}
+            if eResultStatus.ERROR in statuses:
+                summary.status = eResultStatus.ERROR
+            elif eResultStatus.WARNING in statuses:
+                summary.status = eResultStatus.WARNING
+            else:
+                summary.status = eResultStatus.SUCCESS
 
-        if resps:
-            ret_list = [x.get_result() for x in resps]
-            ret = copy(ret_list[0])
-            ret.log = '\n'.join(f"==={name}===\n{x.log}" for name, x in zip(alias, ret_list) if x.log)
-            ret.status = eResultStatus.ERROR if any(x.status == eResultStatus.ERROR for x in ret_list) else eResultStatus.WARNING if any(x.status == eResultStatus.WARNING for x in ret_list) else eResultStatus.SUCCESS
-            if any(r.table.header for r in ret_list):
-                ret.table.header = next(r.table.header for r in ret_list)
-                ret.table.header = ["昵称", '状态'] + ret.table.header
-                ret.table.data = [
-                    {**d, '昵称': name, '状态': f"#{x.status.value}"}
-                    for name, x in zip(alias, ret_list)
-                    if x.table
-                    for d in x.table.data
+            table = next(
+                (result.table for _, _, result in entries if result.table.header and result.table.data), None
+            )
+            if table is not None:
+                summary.table.header = ["昵称", "状态"] + table.header
+                empty_row = dict.fromkeys(table.data[0], "")
+                summary.table.data = [
+                    {**row, "昵称": alias, "状态": f"#{result.status.value}"}
+                    for alias, info, result in entries
+                    for row in (result.table.data if info is not None else [empty_row])
                 ]
             else:
-                ret.table.header = ["昵称", "状态", "结果"]
-                ret.table.data = [
-                    {
-                     '昵称': name, 
-                     '状态': f"#{x.status.value}",
-                     '结果': x.log
-                    }
-                    for name, x in zip(alias, ret_list)
+                summary.table.header = ["昵称", "状态", "结果"]
+                summary.table.data = [
+                    {"昵称": alias, "状态": f"#{result.status.value}", "结果": result.log}
+                    for alias, _, result in entries
                 ]
-            all = await self.save_single_result(key, ret)
-            resps = [all] + resps
-        self.data.single_result[key] = resps
-        return resps
+            aggregate = await self.save_single_result(key, summary)
+            result_infos.insert(0, aggregate)
+        self.data.single_result[key] = result_infos
+        return result_infos
 
     async def do_daily(self):
         raise NotImplementedError
