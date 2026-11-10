@@ -83,7 +83,11 @@ class Account(ModuleManager):
         if not self.readonly:
             logger.debug(f"Acquire lock {self._filename}")
             await self._lck.acquire()
-            await super().__aenter__()
+            try:
+                await super().__aenter__()
+            except BaseException:
+                self._lck.release()
+                raise
         return self
 
     async def __aenter__(self):
@@ -91,20 +95,25 @@ class Account(ModuleManager):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if not self.readonly:
-            await super().__aexit__(exc_type, exc_val, exc_tb)
-            if self.data != self.old_data:
-                await self.save_data()
-            self._lck.release()
-            logger.debug(f"Release lock {self._filename}")
+            try:
+                await super().__aexit__(exc_type, exc_val, exc_tb)
+                if self.data != self.old_data:
+                    await self.save_data()
+            finally:
+                self._lck.release()
+                logger.debug(f"Release lock {self._filename}")
 
     async def save_data(self):
         with open(self._filename, 'w') as f:
             f.write(self.data.to_json())
 
     async def push_result(self, result_list: List[Any], result: ResultInfo) -> List[Any]:
-        while len(result_list) >= 4:
-            result_list.pop().delete_result()
-        return [result] + result_list
+        kept = [result, *result_list[:3]]
+        kept_paths = {item.path for item in kept}
+        for expired in result_list[3:]:
+            if expired.alias == result.alias and expired.path not in kept_paths:
+                expired.delete_result()
+        return kept
 
     async def save_daily_result(self, result: TaskResult, status: eResultStatus) -> TaskResultInfo:
         now = datetime.datetime.now()
@@ -344,9 +353,11 @@ class AccountManager:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if not self.readonly:
-            if self.secret != self.old_secret:
-                self.save_secret()
-            self._lck.release()
+            try:
+                if self.secret != self.old_secret:
+                    self.save_secret()
+            finally:
+                self._lck.release()
 
     @property
     def farmer(self) -> bool:
