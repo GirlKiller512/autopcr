@@ -119,7 +119,10 @@ class Drawer():
         return img
 
     async def draw_task_result(self, data: "ModuleResult") -> Image.Image:
-        if data.table and data.table.data and len(data.table.data) > 1:
+        if (
+            data.table and len(data.table.data) > 1
+            and all(isinstance(column, str) for column in data.table.header)
+        ):
             return await self.draw_task_table(data)
         content = [["配置", data.config.strip()], ["状态", f"#{data.status.value}"], ["结果", data.log.strip()]]
         header = ["名字", data.name.strip()]
