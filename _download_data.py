@@ -10,10 +10,14 @@ async def main():
     await db_start()
     for unit in db.unlock_unit_condition:
         for star in [1, 3, 6]:
-            await imagemgr.unit_icon(unit // 100, star)
+            icon = await imagemgr.unit_icon(unit // 100, star)
+            if icon is not None:
+                icon.close()
     await unit_recognizer.update_dic()
     for ex_equip in db.ex_equipment_data:
-        await imagemgr.ex_equip_icon(ex_equip)
+        icon = await imagemgr.ex_equip_icon(ex_equip)
+        if icon is not None:
+            icon.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
