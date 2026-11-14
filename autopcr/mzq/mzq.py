@@ -14,7 +14,7 @@ from pydantic import Field
 
 from ..model.modelbase import BaseModel
 from ..util import aiorequests
-from ..util.logger import instance as perf_logging, logging
+from ..util.logger import instance as perf_logging, instance as logging
 from .models import UnitData as UnitDTO, GuildRandomData as GuildBattleSettingData
 
 class BattleRequestDTO(BaseModel):
