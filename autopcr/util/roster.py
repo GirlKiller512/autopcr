@@ -5,7 +5,7 @@ import unicodedata
 import zhconv
 
 from . import pcr_data
-from .logger import logging
+from .logger import instance as logging
 
 def normalize_str(string) -> str:
     """
@@ -30,7 +30,7 @@ class Roster:
                 n = normalize_str(n)
                 if n not in self._roster:
                     self._roster[n] = idx
-                else:
+                elif self._roster[n] != idx:
                     logging.warning(f'priconne.chara.Roster: 出现重名{n}于id{idx}与id{self._roster[n]}')
 
     def get_id(self, name):
