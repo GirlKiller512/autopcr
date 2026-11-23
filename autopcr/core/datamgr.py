@@ -66,8 +66,7 @@ class datamgr(BaseModel, Component[apiclient]):
     cleared_byway_quest_id_set: Set[int] = set({})
     return_fes_info_list: List[ReturnFesInfo] = None
     data_time: int = 0
-    # Keep existing V2 caches; isolate V1 caches from both V2 and legacy V1.
-    version: int = 8 if PYDANTIC_V2 else 9
+    version: int = 8
     caravan_dishes: typing.Counter[int] = Counter()
     user_clan_battle_ex_equip_restriction: Dict[int, RestrictionExtraEquip] = {}
     talent_quest_area_info: Dict[int, TalentQuestAreaInfo] = {}
@@ -79,6 +78,11 @@ class datamgr(BaseModel, Component[apiclient]):
     alces_appear_story_flag: int = 0
     alces_receive_tutorial_item_flag: int = 0
     unit_role_gacha_exec_count: int = 0
+
+    def __setstate__(self, state):
+        if PYDANTIC_V2 and not isinstance(state.get("__pydantic_fields_set__"), set):
+            raise ValueError("Incompatible Pydantic client cache")
+        super().__setstate__(state)
 
     @staticmethod
     async def try_update_database(ver: int):
