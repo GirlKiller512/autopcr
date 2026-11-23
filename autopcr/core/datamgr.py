@@ -66,8 +66,8 @@ class datamgr(BaseModel, Component[apiclient]):
     cleared_byway_quest_id_set: Set[int] = set({})
     return_fes_info_list: List[ReturnFesInfo] = None
     data_time: int = 0
-    # Keep existing V2 caches; isolate V1 caches from both V2 and legacy V1.
-    version: int = 8 if PYDANTIC_V2 else 9
+    # Clear cache/pool when switching Pydantic major versions.
+    version: int = 8
     caravan_dishes: typing.Counter[int] = Counter()
     user_clan_battle_ex_equip_restriction: Dict[int, RestrictionExtraEquip] = {}
     talent_quest_area_info: Dict[int, TalentQuestAreaInfo] = {}
